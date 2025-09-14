@@ -6,20 +6,21 @@ from PIL import Image
 import numpy as np
 import google.generativeai as genai
 from dotenv import load_dotenv
-import logging
 
 load_dotenv()
 api_key = os.getenv("gemini_api_key")
 
 app = FastAPI()
 
-#load model once (important for speed!)
+#load model once (important for speed)
 reader = easyocr.Reader(['en'])
 
 #gemini pro
 genai.configure(api_key=api_key)
 model = genai.GenerativeModel("models/gemini-1.5-flash")
-print("📌 Available models:", genai.list_models())
+
+print(" Available models: ", genai.list_models())
+
 @app.post("/ocr")
 async def extract_text(file: UploadFile = File(...)):
     try:
