@@ -15,5 +15,12 @@ def augment_ocr_style(text):
         text = text.replace("i", "l").replace("o", "0").replace("a", "@")
     return text
 
-balanced_df['Description'] = balanced_df['Description'].apply(augment_ocr_style)
-balanced_df.to_csv("expense_dataset_balanced_ocr.csv", index=False)
+#augmented(noisy) version data 
+augmented_df = balanced_df.copy()
+augmented_df['Description'] = augmented_df['Description'].apply(augment_ocr_style)
+
+# combine original + augmented
+final_df = pd.concat([balanced_df, augmented_df], ignore_index=True)
+
+final_df.to_csv("expense_dataset_balanced_ocr.csv", index=False)
+print("Final dataset size:", len(final_df))
