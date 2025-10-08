@@ -23,7 +23,7 @@ def extract_amount_and_date(text: str):
     {text}
     ---
     Please return a valid JSON with:
-    - total_amount (as a number, without currency symbol)
+    - total_amount (as a number, without currency symbol , if not possible then -1)
     - date (in YYYY-MM-DD format, if possible, else null)
 
     Example:
