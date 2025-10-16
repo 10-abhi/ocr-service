@@ -9,7 +9,7 @@ from extract_amount import extract_amount_and_date
 app = FastAPI()
 
 # import google.generativeai as genai
-reader = easyocr.Reader(['en']);
+reader = easyocr.Reader(['en'] , gpu=False);
 pipeline = joblib.load("category_pipeline.pkl");
 
 # api_key = os.getenv("gemini_api_key")
@@ -49,7 +49,7 @@ async def extract_text(file: UploadFile = File(...)):
     for bbox, text, conf in result:
         print(text, conf)
     print("text after cleaning :")
-    raw_text = clean_text(" ".join([res[1] for res in result if res[2]>0.3]))
+    raw_text = clean_text(" ".join([res[1] for res in result if res[2]>0.5]))
 
     #prompting gemini to structure data
     # print("Available models:", genai.list_models())
