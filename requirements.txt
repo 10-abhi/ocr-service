@@ -1,8 +1,11 @@
 fastapi
 uvicorn
+easyocr
+pillow
+numpy
+pandas
+scikit-learn
+joblib
 python-dotenv
 google-generativeai
-easyocr
 torch
-torchvision
-pydantic
