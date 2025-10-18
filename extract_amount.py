@@ -6,13 +6,20 @@ from dotenv import load_dotenv
 from datetime import datetime
 
 load_dotenv()
-api_key=os.getenv("gemini_api_key")
-if not api_key:
-    raise ValueError("Gemini API key not found")
 
-genai.configure(api_key=os.getenv("gemini_api_key"))
-
-model = genai.GenerativeModel("models/gemini-2.5-flash")
+# Lazily configure the genai model to avoid heavy import-time activity and
+# to allow deployments without the GEMINI API key (we'll skip LLM path then).
+_genai_model = None
+def _get_genai_model():
+    global _genai_model
+    if _genai_model is not None:
+        return _genai_model
+    api_key = os.getenv("gemini_api_key")
+    if not api_key:
+        return None
+    genai.configure(api_key=api_key)
+    _genai_model = genai.GenerativeModel("models/gemini-2.5-flash")
+    return _genai_model
 
 # models = genai.list_models()
 
@@ -67,7 +74,9 @@ def extract_amount_and_date(text: str):
         Return ONLY JSON, nothing else.
         """
     
-    try:
+    model = _get_genai_model()
+    if total_amount is None and model is not None:
+        try:
             response = model.generate_content(prompt)
             raw_output = response.candidates[0].content.parts[0].text.strip()
             json_str = re.search(r"\{.*\}", raw_output, re.DOTALL).group(0)
@@ -75,8 +84,12 @@ def extract_amount_and_date(text: str):
             total_amount = data.get("total_amount", -1)
             if not extracted_date:
                 extracted_date = data.get("date")
-    except Exception as e:
+        except Exception as e:
             print("LLM error:", e)
+    else:
+        if total_amount is None and model is None:
+            # No API key configured; skip LLM extraction.
+            print("Gemini API key not configured; skipping LLM extraction")
     
     if total_amount in [None, -1]:
         total_amount = 0.0

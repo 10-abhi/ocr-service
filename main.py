@@ -8,9 +8,30 @@ from extract_amount import extract_amount_and_date
 
 app = FastAPI()
 
-# import google.generativeai as genai
-reader = easyocr.Reader(['en'] , gpu=False);
-pipeline = joblib.load("category_pipeline.pkl");
+# Lazy singletons to avoid heavy import-time initialization which can
+# cause high memory usage on small deployment instances.
+_reader = None
+_pipeline = None
+
+def get_reader():
+    """Lazily create and return the easyocr.Reader instance."""
+    global _reader
+    if _reader is None:
+        # keep gpu=False on platforms without CUDA
+        _reader = easyocr.Reader(['en'], gpu=False)
+    return _reader
+
+def get_pipeline():
+    """Lazily load and return the sklearn pipeline from disk."""
+    global _pipeline
+    if _pipeline is None:
+        import os
+        path = "category_pipeline.pkl"
+        if not os.path.exists(path):
+            # Fail early with a clear error if the model file is missing
+            raise FileNotFoundError(f"{path} not found")
+        _pipeline = joblib.load(path)
+    return _pipeline
 
 # api_key = os.getenv("gemini_api_key")
 def clean_text(text):
@@ -32,19 +53,31 @@ async def extract_text(file: UploadFile = File(...)):
     except Exception:
         return {"error":"Invalid image file"}
     
-    #some image preprocessing
-    image = image.convert("L")                   
-    image = image.resize((image.width*3, image.height*3))
+    # some image preprocessing
+    # convert to grayscale
+    image = image.convert("L")
+
+    # Cap dimensions to avoid huge memory usage on small instances.
+    # Do NOT upscale images (that multiplies pixel count massively).
+    max_dim = 1024
+    w, h = image.size
+    if max(w, h) > max_dim:
+        scale = max_dim / max(w, h)
+        new_w = max(1, int(w * scale))
+        new_h = max(1, int(h * scale))
+        image = image.resize((new_w, new_h), resample=Image.LANCZOS)
+
+    # apply a mild sharpen and moderate contrast only
     image = image.filter(ImageFilter.SHARPEN)
     enhancer = ImageEnhance.Contrast(image)
-    image = enhancer.enhance(3)
+    image = enhancer.enhance(1.2)
 
 
     # Convert image to numpy array
     img_array = np.array(image)
 
     #run ocr
-    result = reader.readtext(img_array)
+    result = get_reader().readtext(img_array)
     print("text before cleaning :")
     for bbox, text, conf in result:
         print(text, conf)
@@ -76,7 +109,7 @@ async def extract_text(file: UploadFile = File(...)):
     #     "raw_text": raw_text,
     #     "structured": structured
     # }
-    predicted_category = pipeline.predict([raw_text])[0];
+    predicted_category = get_pipeline().predict([raw_text])[0];
     extracted = extract_amount_and_date(raw_text)
 
     print("raw_text" , raw_text);
