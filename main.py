@@ -59,7 +59,8 @@ async def extract_text(file: UploadFile = File(...)):
 
     # Cap dimensions to avoid huge memory usage on small instances.
     # Do NOT upscale images (that multiplies pixel count massively).
-    max_dim = 1024
+    # Lowered max dimension to reduce memory footprint on 512MB instances.
+    max_dim = 640
     w, h = image.size
     if max(w, h) > max_dim:
         scale = max_dim / max(w, h)
@@ -73,11 +74,17 @@ async def extract_text(file: UploadFile = File(...)):
     image = enhancer.enhance(1.2)
 
 
-    # Convert image to numpy array
+    # Convert image to numpy array for OCR and run OCR
     img_array = np.array(image)
-
-    #run ocr
     result = get_reader().readtext(img_array)
+
+    # Free the numpy array ASAP to lower peak memory usage
+    try:
+        del img_array
+    except Exception:
+        pass
+    import gc
+    gc.collect()
     print("text before cleaning :")
     for bbox, text, conf in result:
         print(text, conf)
@@ -109,7 +116,15 @@ async def extract_text(file: UploadFile = File(...)):
     #     "raw_text": raw_text,
     #     "structured": structured
     # }
-    predicted_category = get_pipeline().predict([raw_text])[0];
+    # Optionally skip loading the classifier on low-memory instances. Set
+    # environment variable USE_CLASSIFIER=0 to disable.
+    import os
+    use_classifier = os.getenv("USE_CLASSIFIER", "1") not in ("0", "false", "False")
+    predicted_category = None
+    if use_classifier:
+        predicted_category = get_pipeline().predict([raw_text])[0]
+    else:
+        predicted_category = "unknown"
     extracted = extract_amount_and_date(raw_text)
 
     print("raw_text" , raw_text);
