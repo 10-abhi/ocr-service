@@ -5,8 +5,20 @@ from PIL import Image , ImageEnhance , ImageFilter
 import numpy as np
 import joblib
 from extract_amount import extract_amount_and_date
+from google.cloud import vision
+import io
 
 app = FastAPI()
+client = vision.ImageAnnotatorClient()
+
+def extract_text(image_bytes : bytes):
+    image = vision.Image(content=image_bytes)
+    response = client.text_detection(image=image)
+    texts = response.text_annotations
+    if texts:
+        return texts[0].description.strip()
+    return ""
+
 
 # import google.generativeai as genai
 reader = easyocr.Reader(['en'] , gpu=False);
@@ -25,7 +37,7 @@ def clean_text(text):
 # print(" Available models: ", genai.list_models())
 
 @app.post("/ocr")
-async def extract_text(file: UploadFile = File(...)):
+async def ocr_endpoint(file: UploadFile = File(...)):
     try:
         contents = await file.read()
         image = Image.open(io.BytesIO(contents))
@@ -39,17 +51,24 @@ async def extract_text(file: UploadFile = File(...)):
     enhancer = ImageEnhance.Contrast(image)
     image = enhancer.enhance(3)
 
+    buf = io.BytesIO()
+    image.save(buf , format="PNG")
+    img_bytes = buf.getvalue()
+
 
     # Convert image to numpy array
-    img_array = np.array(image)
+    # img_array = np.array(image)
+    # raw_text = extract_text(img_array)
+    raw_text = extract_text(img_bytes)
+    raw_text = clean_text(raw_text)
 
     #run ocr
-    result = reader.readtext(img_array)
-    print("text before cleaning :")
-    for bbox, text, conf in result:
-        print(text, conf)
-    print("text after cleaning :")
-    raw_text = clean_text(" ".join([res[1] for res in result if res[2]>0.5]))
+    # result = reader.readtext(img_array)
+    # print("text before cleaning :")
+    # for bbox, text, conf in result:
+    #     print(text, conf)
+    # print("text after cleaning :")
+    # raw_text = clean_text(" ".join([res[1] for res in result if res[2]>0.5]))
 
     #prompting gemini to structure data
     # print("Available models:", genai.list_models())
