@@ -7,24 +7,33 @@ import joblib
 from extract_amount import extract_amount_and_date
 from google.cloud import vision
 import io
+import os
+import requests
 
 app = FastAPI()
-client = vision.ImageAnnotatorClient()
-
-def extract_text(image_bytes : bytes):
-    image = vision.Image(content=image_bytes)
-    response = client.text_detection(image=image)
-    texts = response.text_annotations
-    if texts:
-        return texts[0].description.strip()
-    return ""
-
+# client = vision.ImageAnnotatorClient()
 
 # import google.generativeai as genai
 reader = easyocr.Reader(['en'] , gpu=False);
 pipeline = joblib.load("category_pipeline.pkl");
 
 # api_key = os.getenv("gemini_api_key")
+api_key = os.getenv("ocrspaceapikey")
+
+def extract_text(image_bytes: bytes):
+    response = requests.post(
+    "https://api.ocr.space/parse/image",
+    files={"filename": ("image.png", image_bytes, "image/png")},
+    data={"apikey": api_key, "language": "eng"}
+    )
+    result = response.json()
+    print("ocr space response:", result)  
+    if result["IsErroredOnProcessing"]:
+        print("Error :", result.get("ErrorMessage"))
+        return ""
+    return result["ParsedResults"][0]["ParsedText"].strip()
+
+
 def clean_text(text):
     text = text.replace("\n", " ").strip()
     text = " ".join(text.split()) 
@@ -40,27 +49,28 @@ def clean_text(text):
 async def ocr_endpoint(file: UploadFile = File(...)):
     try:
         contents = await file.read()
-        image = Image.open(io.BytesIO(contents))
+        # image = Image.open(io.BytesIO(contents))
+        raw_text = extract_text(contents)
     except Exception:
         return {"error":"Invalid image file"}
     
     #some image preprocessing
-    image = image.convert("L")                   
-    image = image.resize((image.width*3, image.height*3))
-    image = image.filter(ImageFilter.SHARPEN)
-    enhancer = ImageEnhance.Contrast(image)
-    image = enhancer.enhance(3)
+    # image = image.convert("L")                   
+    # image = image.resize((image.width*3, image.height*3))
+    # image = image.filter(ImageFilter.SHARPEN)
+    # enhancer = ImageEnhance.Contrast(image)
+    # image = enhancer.enhance(3)
 
-    buf = io.BytesIO()
-    image.save(buf , format="PNG")
-    img_bytes = buf.getvalue()
+    # buf = io.BytesIO()
+    # image.save(buf , format="PNG")
+    # img_bytes = buf.getvalue()
 
 
     # Convert image to numpy array
     # img_array = np.array(image)
     # raw_text = extract_text(img_array)
-    raw_text = extract_text(img_bytes)
     raw_text = clean_text(raw_text)
+    print("the raw text is ", raw_text)
 
     #run ocr
     # result = reader.readtext(img_array)
