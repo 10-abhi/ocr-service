@@ -1,37 +1,44 @@
 from fastapi import FastAPI , File , UploadFile
 import easyocr
-import io
+import pytesseract
 from PIL import Image , ImageEnhance , ImageFilter
 import numpy as np
 import joblib
 from extract_amount import extract_amount_and_date
-from google.cloud import vision
+# from google.cloud import vision
 import io
-import os
-import requests
+# import os
+# import requests
 
 app = FastAPI()
 # client = vision.ImageAnnotatorClient()
 
 # import google.generativeai as genai
-reader = easyocr.Reader(['en'] , gpu=False);
+# reader = easyocr.Reader(['en'] , gpu=False);
+
 pipeline = joblib.load("category_pipeline.pkl");
 
 # api_key = os.getenv("gemini_api_key")
-api_key = os.getenv("ocrspaceapikey")
+# api_key = os.getenv("ocrspaceapikey")
+
+pytesseract.pytesseract.tesseract_cmd = r"/usr/bin/tesseract"
 
 def extract_text(image_bytes: bytes):
-    response = requests.post(
-    "https://api.ocr.space/parse/image",
-    files={"filename": ("image.png", image_bytes, "image/png")},
-    data={"apikey": api_key, "language": "eng"}
-    )
-    result = response.json()
-    print("ocr space response:", result)  
-    if result["IsErroredOnProcessing"]:
-        print("Error :", result.get("ErrorMessage"))
+    try:
+        image = Image.open(io.BytesIO(image_bytes))
+    except Exception as e:
+        print("Failed to open image:", e)
         return ""
-    return result["ParsedResults"][0]["ParsedText"].strip()
+    
+    image = image.convert("L") 
+    image = image.resize((image.width * 3, image.height * 3))
+    image = image.filter(ImageFilter.SHARPEN)
+    enhancer = ImageEnhance.Contrast(image)
+    image = enhancer.enhance(3)
+
+    image = image.point(lambda x: 0 if x < 128 else 255, '1')
+    text = pytesseract.image_to_string(image, lang="eng")
+    return text.strip()
 
 
 def clean_text(text):
@@ -54,13 +61,6 @@ async def ocr_endpoint(file: UploadFile = File(...)):
     except Exception:
         return {"error":"Invalid image file"}
     
-    #some image preprocessing
-    # image = image.convert("L")                   
-    # image = image.resize((image.width*3, image.height*3))
-    # image = image.filter(ImageFilter.SHARPEN)
-    # enhancer = ImageEnhance.Contrast(image)
-    # image = enhancer.enhance(3)
-
     # buf = io.BytesIO()
     # image.save(buf , format="PNG")
     # img_bytes = buf.getvalue()
@@ -112,6 +112,7 @@ async def ocr_endpoint(file: UploadFile = File(...)):
     print( "predicted_category", predicted_category)
     print("total_amount",extracted["total_amount"])
     print("ext date" , extracted["date"])
+    
     return {
         # "raw_text": raw_text,
         "total_amount":extracted["total_amount"],
