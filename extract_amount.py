@@ -23,3 +23,12 @@ def _get_genai_model():
     _genai_model = genai.GenerativeModel("models/gemini-2.5-flash")
     return _genai_model
 
+
+def extract_amount_and_date(text: str):
+    # preprocessing helpers to make ocr output cleaner for the llm
+    def _clean_text(s: str) -> str:
+        s = re.sub(r"[\x00-\x09\x0b\x0c\x0e-\x1f\x7f]+", "", s)
+        s = s.replace('\r\n', '\n').replace('\r', '\n')
+        s = re.sub(r"\n{2,}", "\n", s)
+        lines = [re.sub(r"\s+", " ", ln).strip() for ln in s.split('\n')]
+        return "\n".join([ln for ln in lines if ln])
