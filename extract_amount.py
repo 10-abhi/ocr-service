@@ -73,4 +73,101 @@ def extract_amount_and_date(text: str):
         return False
 
 
-    
+    # date parsing : tryin regexes and dateutil 
+    def _parse_date_from_line(line: str):
+        # common date regexes
+        patterns = [
+            r"(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})",
+            r"(\d{4}[/-]\d{1,2}[/-]\d{1,2})",
+            r"(\d{1,2}\s+[A-Za-z]{3,9}\s+\d{2,4})",
+            r"([A-Za-z]{3,9}\s+\d{1,2},?\s+\d{4})",
+        ]
+        for p in patterns:
+            m = re.search(p, line)
+            if m:
+                ds = m.group(1)
+                # dateutil for parsing
+                if _dateutil_parser:
+                    try:
+                        return _dateutil_parser.parse(ds, dayfirst=False).strftime("%Y-%m-%d")
+                    except Exception:
+                        pass
+                # fallback to manual formats
+                for fmt in ("%d/%m/%y", "%d/%m/%Y", "%Y-%m-%d", "%m/%d/%y", "%m/%d/%Y", "%d %b %Y", "%d %B %Y"):
+                    try:
+                        return datetime.strptime(ds, fmt).strftime("%Y-%m-%d")
+                    except Exception:
+                        continue
+        return None
+
+    cleaned = _clean_text(text)
+    cleaned = _normalize_common_ocr_errors(cleaned)
+
+    # quick line-based regex , first attempt for date and total (fast, often works)
+    total_amount = None
+    extracted_date = None
+    lines = cleaned.split('\n')
+    # prefer explicit grand/total/amount due labels in lines (avoid matching address numbers)
+    for ln in lines:
+        lower = ln.lower()
+        # date detection per line
+        date_m = re.search(r"(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})", ln)
+        if date_m and not extracted_date:
+            date_str = date_m.group(1)
+            for fmt in ("%d/%m/%y", "%d/%m/%Y", "%Y-%m-%d", "%m/%d/%y", "%m/%d/%Y"):
+                try:
+                    extracted_date = datetime.strptime(date_str, fmt).strftime("%Y-%m-%d")
+                    break
+                except Exception:
+                    continue
+
+    # Helper , find a numeric amount occurring after a keyword in the same line
+    def _amount_after_keyword(line: str, keyword: str):
+        lower = line.lower()
+        pos = lower.find(keyword)
+        # if keyword not found try whole line
+        search_zone = line[pos:] if pos >= 0 else line
+        m = re.search(r"([\d][\d,]*\.?\d{0,2})", search_zone)
+        if m:
+            try:
+                return float(m.group(1).replace(',', ''))
+            except Exception:
+                return None
+        return None
+
+    # find explicit grand total or amount due first (prefering numbers that appear after the keyword)
+    for ln in lines:
+        lower = ln.lower()
+        if 'grand total' in lower:
+            amt = _amount_after_keyword(ln, 'grand total')
+            if amt is not None:
+                total_amount = amt
+                break
+        if 'amount due' in lower or 'amount due:' in lower:
+            amt = _amount_after_keyword(ln, 'amount due')
+            if amt is not None:
+                total_amount = amt
+                break
+        # plain 'total' but avoiding matching 'subtotal' lines
+        if re.search(r"\btotal\b", lower) and 'sub' not in lower:
+            amt = _amount_after_keyword(ln, 'total')
+            if amt is not None:
+                total_amount = amt
+                break
+
+    # if still not found , looking for subtotal line to compute fallback later (we keep subtotal captured)
+    subtotal = None
+    for ln in lines:
+        lower = ln.lower()
+        if 'sub total' in lower or 'subtotal' in lower:
+            m = re.search(r"([\d][\d,]*\.?\d{0,2})", ln)
+            if m:
+                try:
+                    subtotal = float(m.group(1).replace(',', ''))
+                except Exception:
+                    subtotal = None
+                break
+
+    # if quick regex found both , returning immediately
+    if total_amount is not None and extracted_date is not None:
+        return {"total_amount": total_amount, "date": extracted_date}
