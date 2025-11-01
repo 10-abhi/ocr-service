@@ -171,3 +171,42 @@ def extract_amount_and_date(text: str):
     # if quick regex found both , returning immediately
     if total_amount is not None and extracted_date is not None:
         return {"total_amount": total_amount, "date": extracted_date}
+
+    # candidate lines early (used for labeled parsing and llm prompt)
+    candidates = _candidate_lines(cleaned)
+
+    # building scored candidates : each candidate line is scored and numeric tokens extracted
+    def _find_numbers(line: str):
+        return [(m.start(), m.group(1)) for m in re.finditer(r"([\d][\d,]*\.?\d{0,2})", line)]
+
+    def _amount_near_label(line: str, label_patterns):
+        lower = line.lower()
+        nums = _find_numbers(line)
+        if not nums:
+            return None
+        # find label position (last occurrence) among alternatives
+        pos = -1
+        for patt in label_patterns:
+            p = lower.rfind(patt)
+            if p > pos:
+                pos = p
+        # if label found, look for first number after label
+        if pos >= 0:
+            for start, num in nums:
+                if start >= pos:
+                    try:
+                        return float(num.replace(',', ''))
+                    except Exception:
+                        continue
+        # otherwise, as a fallback prefer the last numeric token if it looks like a currency (has a decimal)
+        for start, num in reversed(nums):
+            if '.' in num:
+                try:
+                    return float(num.replace(',', ''))
+                except Exception:
+                    continue
+        # final fallback: return last number
+        try:
+            return float(nums[-1][1].replace(',', ''))
+        except Exception:
+            return None
