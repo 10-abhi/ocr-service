@@ -210,3 +210,46 @@ def extract_amount_and_date(text: str):
             return float(nums[-1][1].replace(',', ''))
         except Exception:
             return None
+
+    def _score_and_extract(candidates_list):
+        scored = []
+        total_lines = len(lines)
+        for idx, ln in enumerate(candidates_list):
+            low = ln.lower()
+            if not ln.strip():
+                continue
+            # skip lines that look like addresses or phones
+            is_address_like = _looks_like_phone_or_address(ln)
+            # features
+            score = 0
+            if any(k in low for k in ["grand total", "amount due", "amount paid"]):
+                score += 30
+            if re.search(r"\btotal\b", low) and 'sub' not in low:
+                score += 10
+            if 'subtotal' in low or 'sub total' in low:
+                score += 6
+            if 'tip' in low:
+                score += 6
+            if 'service' in low:
+                score += 4
+            if re.search(r"[$₹£€]", ln):
+                score += 8
+            # prefer numbers with decimals 
+            if re.search(r"\d+\.\d{1,2}", ln):
+                score += 5
+            # prefer lines appearing near the bottom of the receipt (heuristic)
+            if idx >= max(0, len(candidates_list) - 5):
+                score += 2
+            # negativing address/phone like lines
+            if is_address_like:
+                score -= 20
+            # extract numeric tokens and choose appropriate token
+            amt = _amount_near_label(ln, ['total', 'grand total', 'amount due', 'subtotal', 'sub total', 'tip'])
+            if amt is None:
+                continue
+            scored.append((score, ln, amt))
+        # sort by score desc 
+        scored.sort(key=lambda x: (x[0], x[2]), reverse=True)
+        return scored
+
+    scored_candidates = _score_and_extract(candidates)
