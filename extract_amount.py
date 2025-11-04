@@ -253,3 +253,70 @@ def extract_amount_and_date(text: str):
         return scored
 
     scored_candidates = _score_and_extract(candidates)
+
+    #parsing labeled amounts from candidate lines to prefer explicit Grand/Total labels.
+    labeled = {}
+    # examining candidate lines (including a few extra lines) for labeled amounts
+    for ln in (candidates + [cleaned]):
+        lower = ln.lower()
+        # grand total
+        if 'grand total' in lower:
+            amt = _amount_near_label(ln, ['grand total'])
+            if amt is not None:
+                labeled['grand_total'] = amt
+        # amount due/paid
+        if re.search(r'\b(total\s*due|amount\s*due|amount\s*paid|amount\s*due)\b', lower):
+            amt = _amount_near_label(ln, ['amount due', 'amount paid', 'total due'])
+            if amt is not None:
+                labeled['amount_due'] = amt
+
+        if 'sub total' in lower or 'subtotal' in lower:
+            amt = _amount_near_label(ln, ['sub total', 'subtotal'])
+            if amt is not None:
+                labeled['subtotal'] = amt
+        
+        if 'tip' in lower:
+            amt = _amount_near_label(ln, ['tip'])
+            if amt is not None:
+                labeled['tip'] = amt
+        
+        if 'service' in lower or 'service charge' in lower:
+            amt = _amount_near_label(ln, ['service charge', 'service'])
+            if amt is not None:
+                labeled.setdefault('service', amt)
+        # taxes
+        if re.search(r'cgst|sgst|tax', lower):
+            amt = _amount_near_label(ln, ['cgst', 'sgst', 'tax'])
+            if amt is not None:
+                labeled.setdefault('taxes', 0.0)
+                labeled['taxes'] += amt
+        # generic 'total' (avoiding 'total qty' / 'total qly' etc.)
+        if re.search(r'\btotal\b', lower) and 'sub' not in lower and not re.search(r'qty|qly|items|no\.|count', lower):
+            amt = _amount_near_label(ln, ['total'])
+            if amt is not None:
+                labeled.setdefault('total', amt)
+
+
+    # decide which labeled amount to use 
+    if os.getenv('EXTRACT_DEBUG'):
+        print('DEBUG labeled:', labeled)
+    if 'grand_total' in labeled:
+        total_amount = labeled['grand_total']
+    elif 'amount_due' in labeled:
+        total_amount = labeled['amount_due']
+    else:
+        # if subtotal + additions (tip/service/taxes) exist, prefer computed grand total
+        if 'subtotal' in labeled:
+            subtotal_val = labeled.get('subtotal', 0.0)
+            tip = labeled.get('tip', 0.0)
+            service = labeled.get('service', 0.0)
+            taxes = labeled.get('taxes', 0.0)
+            computed = subtotal_val + tip + service + taxes
+            if computed > 0 and (tip or service or taxes):
+                total_amount = computed
+        # otherwise prefer an explicit 'total' label (if not already set)
+        if total_amount is None and 'total' in labeled:
+            total_amount = labeled['total']
+        # as a last resort, if only subtotal exists use it
+        if total_amount is None and 'subtotal' in labeled:
+            total_amount = labeled.get('subtotal')
