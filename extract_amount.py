@@ -320,3 +320,104 @@ def extract_amount_and_date(text: str):
         # as a last resort, if only subtotal exists use it
         if total_amount is None and 'subtotal' in labeled:
             total_amount = labeled.get('subtotal')
+
+    #focused prompt using candidate lines to improve llm accuracy
+    candidates = _candidate_lines(cleaned)
+    prompt_context = "\n".join(candidates[:40])
+    if not prompt_context:
+        # fall back to the whole cleaned text but truncated
+        prompt_context = cleaned[:4000]
+
+    base_instruction = (
+        "You are a financial assistant. Extract two fields from the provided receipt text:"
+        " total_amount (a number) and date (YYYY-MM-DD or null)."
+        " Return ONLY a single valid JSON object with these keys. If total_amount cannot be found, return -1. If date cannot be found, return null."
+    )
+
+    model = _get_genai_model()
+    if model is not None:
+        few_shot = (
+            "Example 1:\n"
+            "OCR text:\nStore ABC\nTotal: 1,234.56\nDate: 12/10/25\n\n"
+            "JSON:\n{\"total_amount\": 1234.56, \"date\": \"2025-10-12\"}\n\n"
+            "Example 2:\n"
+            "OCR text:\nCorner Shop\nSub Total 100.00\nTip: 20.00\nService: 5.00\nGrand Total: 125.00\nDate: 2024-05-01\n\n"
+            "JSON:\n{\"total_amount\": 125.0, \"date\": \"2024-05-01\"}\n\n"
+        )
+
+        full_prompt = (
+            base_instruction
+            + "\n\n" + few_shot
+            + "Receipt lines to examine:\n"
+            + prompt_context
+            + "\n\nIMPORTANT: Return ONLY a single valid JSON object and NOTHING else."
+        )
+
+        def _call_model(prompt_text: str):
+            try:
+                resp = model.generate_content(prompt_text, temperature=0)
+                out = resp.candidates[0].content.parts[0].text.strip()
+                return out
+            except Exception as e:
+                if os.getenv('EXTRACT_DEBUG'):
+                    print("LLM error:", e)
+                return None
+
+        raw_output = _call_model(full_prompt)
+
+        # parse json , retry once with a stricter redirect if malformed
+        data = None
+        for attempt in range(2):
+            if not raw_output:
+                break
+            m = re.search(r"(\{.*\})", raw_output, re.DOTALL)
+            if m:
+                json_str = m.group(1)
+                try:
+                    parsed = json.loads(json_str)
+                    ta = parsed.get("total_amount", None)
+                    dt = parsed.get("date", None)
+                    try:
+                        if ta is not None and ta != -1:
+                            ta = float(str(ta).replace(',', ''))
+                    except Exception:
+                        ta = None
+                    if dt:
+                        try:
+                            if _dateutil_parser:
+                                dt = _dateutil_parser.parse(dt, dayfirst=False).strftime("%Y-%m-%d")
+                            else:
+                                for fmt in ("%Y-%m-%d", "%d/%m/%y", "%d/%m/%Y", "%m/%d/%y", "%m/%d/%Y"):
+                                    try:
+                                        dt = datetime.strptime(dt, fmt).strftime("%Y-%m-%d")
+                                        break
+                                    except Exception:
+                                        continue
+                        except Exception:
+                            pass
+                    data = {"total_amount": ta if ta is not None else parsed.get("total_amount", -1), "date": dt}
+                    break
+                except Exception:
+                    raw_output = _call_model(full_prompt + "\n\nRETURN ONLY A VALID JSON OBJECT: {\"total_amount\": number, \"date\": \"YYYY-MM-DD\"|null}")
+                    continue
+            else:
+                raw_output = _call_model(full_prompt + "\n\nRETURN ONLY A VALID JSON OBJECT: {\"total_amount\": number, \"date\": \"YYYY-MM-DD\"|null}")
+                continue
+
+        if data:
+            ta_val = data.get("total_amount", -1)
+            if ta_val not in [None, -1]:
+                try:
+                    total_amount = float(ta_val)
+                    method_used = 'llm'
+                    confidence = max(confidence, 0.95)
+                except Exception:
+                    pass
+            if data.get("date"):
+                extracted_date = data.get("date")
+        else:
+            if os.getenv('EXTRACT_DEBUG'):
+                print("LLM did not return valid JSON; falling back to heuristics")
+    else:
+        if os.getenv('EXTRACT_DEBUG'):
+            print("Gemini API key not configured; skipping LLM extraction")
