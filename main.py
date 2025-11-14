@@ -1,9 +1,10 @@
 from fastapi import FastAPI , File , UploadFile
-import easyocr
 import pytesseract
 from PIL import Image , ImageEnhance , ImageFilter
 import numpy as np
 import joblib
+import os
+import logging
 from extract_amount import extract_amount_and_date
 # from google.cloud import vision
 import io
@@ -16,7 +17,15 @@ app = FastAPI()
 # import google.generativeai as genai
 # reader = easyocr.Reader(['en'] , gpu=False);
 
-pipeline = joblib.load("category_pipeline.pkl");
+pipeline = joblib.load("category_pipeline.pkl")
+
+# env-driven logging (default to prod warning)
+_DEV_MODE = os.getenv("EXTRACT_DEBUG", "0").lower() in ("1", "true", "yes")
+logging.basicConfig(
+    level=logging.DEBUG if _DEV_MODE else logging.WARNING,
+    format=("%(levelname)s %(name)s: %(message)s" if _DEV_MODE else "%(asctime)s %(levelname)s %(name)s: %(message)s"),
+)
+logger = logging.getLogger(__name__)
 
 # api_key = os.getenv("gemini_api_key")
 # api_key = os.getenv("ocrspaceapikey")
@@ -27,7 +36,7 @@ def extract_text(image_bytes: bytes):
     try:
         image = Image.open(io.BytesIO(image_bytes))
     except Exception as e:
-        print("Failed to open image:", e)
+        logger.exception("Failed to open image")
         return ""
     
     image = image.convert("L") 
@@ -70,7 +79,7 @@ async def ocr_endpoint(file: UploadFile = File(...)):
     # img_array = np.array(image)
     # raw_text = extract_text(img_array)
     raw_text = clean_text(raw_text)
-    print("the raw text is ", raw_text)
+    logger.debug("the raw text is %s", raw_text)
 
     #run ocr
     # result = reader.readtext(img_array)
@@ -105,22 +114,25 @@ async def ocr_endpoint(file: UploadFile = File(...)):
     #     "raw_text": raw_text,
     #     "structured": structured
     # }
-    predicted_category = pipeline.predict([raw_text])[0];
+    predicted_category = pipeline.predict([raw_text])[0]
     extracted = extract_amount_and_date(raw_text)
 
-    print("raw_text" , raw_text);
-    print( "predicted_category", predicted_category)
-    print("total_amount",extracted["total_amount"])
-    print("ext date" , extracted["date"])
+    logger.debug("predicted_category=%s", predicted_category)
+    logger.debug("extracted total=%s date=%s", extracted.get("total_amount"), extracted.get("date"))
     
     return {
-        # "raw_text": raw_text,
-        "total_amount":extracted["total_amount"],
+        "total_amount": extracted.get("total_amount"),
         "predicted_category": predicted_category,
-        "date":extracted["date"],
+        "date": extracted.get("date"),
     }
 
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run(
+        "main:app",
+        host="0.0.0.0",
+        port=8000,
+        reload=_DEV_MODE,
+        log_level="debug" if _DEV_MODE else "info",
+    )
